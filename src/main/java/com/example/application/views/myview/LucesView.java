@@ -25,7 +25,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 
 @PageTitle("⚡ Control de Luces y Accesos ⚡")
-@Route("luces")
+@Route("")
 public class LucesView extends Composite<VerticalLayout> {
 
     private final SerialReaderService serialReaderService;
