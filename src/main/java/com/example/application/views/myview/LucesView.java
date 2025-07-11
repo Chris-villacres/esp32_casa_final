@@ -20,27 +20,27 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 
 @PageTitle("Control de Luces y Accesos")
 @Route("luces")
 public class LucesView extends Composite<VerticalLayout> {
 
     private final SerialReaderService serialReaderService;
-    private final Label temperaturaLabel = new Label("Temperatura actual: -- °C");
     private final Label motorEstadoLabel = new Label("Estado del motor: --");
-
-    private final List<TemperaturaRegistro> temperaturaHistorial = new ArrayList<>();
-    private final Grid<TemperaturaRegistro> temperaturaGrid = new Grid<>(TemperaturaRegistro.class, false);
 
     private final List<EventoSistema> eventosSistema = new ArrayList<>();
     private final Grid<EventoSistema> eventosGrid = new Grid<>(EventoSistema.class, false);
+
+    private final List<TemperaturaRegistro> temperaturaHistorial = new ArrayList<>();
+    private final Grid<TemperaturaRegistro> temperaturaGrid = new Grid<>(TemperaturaRegistro.class, false);
 
     private int contadorLecturas = 0;
 
     @Autowired
     public LucesView(SerialReaderService serialReaderService) {
         this.serialReaderService = serialReaderService;
-
         VerticalLayout content = getContent();
         content.setWidth("100%");
         content.setAlignItems(Alignment.CENTER);
@@ -54,24 +54,20 @@ public class LucesView extends Composite<VerticalLayout> {
             );
         }
 
-        // Mostrar etiquetas de estado
-        content.add(temperaturaLabel, motorEstadoLabel);
+        content.add(motorEstadoLabel);
 
-        // Tabla de historial de temperaturas
+        eventosGrid.addColumn(EventoSistema::getHora).setHeader("Hora").setAutoWidth(true);
+        eventosGrid.addColumn(EventoSistema::getMensaje).setHeader("Evento").setAutoWidth(true);
+        eventosGrid.setItems(eventosSistema);
+        eventosGrid.setWidth("600px");
+        content.add(eventosGrid);
+
         temperaturaGrid.addColumn(TemperaturaRegistro::getNumero).setHeader("#").setAutoWidth(true);
         temperaturaGrid.addColumn(TemperaturaRegistro::getValor).setHeader("Temperatura (°C)").setAutoWidth(true);
         temperaturaGrid.setItems(temperaturaHistorial);
         temperaturaGrid.setWidth("300px");
         content.add(temperaturaGrid);
 
-        // Tabla de eventos del sistema
-        eventosGrid.addColumn(EventoSistema::getHora).setHeader("Hora").setAutoWidth(true);
-        eventosGrid.addColumn(EventoSistema::getMensaje).setHeader("Evento").setAutoWidth(true);
-        eventosGrid.setItems(eventosSistema);
-        eventosGrid.setWidth("500px");
-        content.add(eventosGrid);
-
-        // Botones de control
         content.add(
                 createButton("ON", VaadinIcon.LIGHTBULB, "ON"),
                 createButton("OFF", VaadinIcon.LIGHTBULB, "OFF"),
@@ -87,8 +83,22 @@ public class LucesView extends Composite<VerticalLayout> {
                 createButton("MOTOR OFF", VaadinIcon.STOP, "MOTOR OFF")
         );
 
-        // Iniciar escucha continua desde ESP32 con callback para actualizar UI
-        serialReaderService.startListening(this::handleSerialResponse);
+        serialReaderService.startListening(this::handleSerialResponse, UI.getCurrent());
+
+        // Refresco automático de las tablas cada segundo
+        UI ui = UI.getCurrent();
+        Timer refrescoAutomatico = new Timer(true);
+        refrescoAutomatico.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                if (ui != null) {
+                    ui.access(() -> {
+                        eventosGrid.getDataProvider().refreshAll();
+                        temperaturaGrid.getDataProvider().refreshAll();
+                    });
+                }
+            }
+        }, 0, 1000); // Cada 1000 ms = 1 segundo
     }
 
     private Button createButton(String text, VaadinIcon icon, String command) {
@@ -114,66 +124,34 @@ public class LucesView extends Composite<VerticalLayout> {
     }
 
     private void handleSerialResponse(String response) {
-        UI.getCurrent().access(() -> {
-            // Temperatura
-            if (response.startsWith("Temperatura:")) {
-                temperaturaLabel.setText(response);
+        System.out.println("🔍 Recibido: " + response);
 
-                String valorTexto = response.replace("Temperatura:", "").replace("C", "").trim();
-                try {
-                    double valor = Double.parseDouble(valorTexto);
-                    contadorLecturas++;
-                    if (temperaturaHistorial.size() >= 20) {
-                        temperaturaHistorial.remove(0);
-                    }
-                    temperaturaHistorial.add(new TemperaturaRegistro(contadorLecturas, valor));
-                    temperaturaGrid.getDataProvider().refreshAll();
-                } catch (NumberFormatException ignored) {
+        if (response.toLowerCase().contains("motor encendido")) {
+            motorEstadoLabel.setText("Estado del motor: ENCENDIDO");
+        } else if (response.toLowerCase().contains("motor apagado")) {
+            motorEstadoLabel.setText("Estado del motor: APAGADO");
+        }
+
+        if (response.toLowerCase().startsWith("temperatura:")) {
+            try {
+                String valorTexto = response.substring("Temperatura:".length()).replace("C", "").trim();
+                double valor = Double.parseDouble(valorTexto);
+                contadorLecturas++;
+                if (temperaturaHistorial.size() >= 30) {
+                    temperaturaHistorial.remove(0);
                 }
-                return;
+                temperaturaHistorial.add(new TemperaturaRegistro(contadorLecturas, valor));
+                // No necesitas llamar a refreshAll aquí porque ya lo hace el temporizador
+            } catch (NumberFormatException ignored) {
             }
+            return;
+        }
 
-            // Estado motor
-            if (response.contains("Motor DC ENCENDIDO")) {
-                motorEstadoLabel.setText("Estado del motor: ENCENDIDO");
-                agregarEvento(response);
-                return;
-            }
-
-            if (response.contains("Motor DC APAGADO")) {
-                motorEstadoLabel.setText("Estado del motor: APAGADO");
-                agregarEvento(response);
-                return;
-            }
-
-            // Eventos automáticos de puerta
-            if (response.contains("Abriendo puerta")) {
-                Notification.show("🔓 Puerta abierta automáticamente", 3000, Notification.Position.MIDDLE);
-                agregarEvento(response);
-                return;
-            }
-
-            if (response.contains("Cerrando puerta")) {
-                Notification.show("🔒 Puerta cerrada automáticamente", 3000, Notification.Position.MIDDLE);
-                agregarEvento(response);
-                return;
-            }
-
-            // Otros eventos útiles
-            if (
-                    response.toLowerCase().contains("encendidos") || response.toLowerCase().contains("apagados") ||
-                            response.toLowerCase().contains("puerta") || response.toLowerCase().contains("garaje") ||
-                            response.toLowerCase().contains("luz") || response.toLowerCase().contains("cuarto") ||
-                            response.toLowerCase().contains("externa") || response.toLowerCase().contains("motor")
-            ) {
-                agregarEvento(response);
-                Notification.show(response, 3000, Notification.Position.MIDDLE);
-            }
-        });
+        agregarEvento(response);
+        Notification.show(response, 3000, Notification.Position.MIDDLE);
     }
 
     private void registrarEventoManual(String comando) {
-        // Mapear comando a texto amigable para la tabla y notificación
         String descripcion;
         switch (comando) {
             case "ON": descripcion = "Luces principales encendidas (manual)"; break;
@@ -195,11 +173,11 @@ public class LucesView extends Composite<VerticalLayout> {
     }
 
     private void agregarEvento(String mensaje) {
-        if (eventosSistema.size() >= 20) {
+        if (eventosSistema.size() >= 30) {
             eventosSistema.remove(0);
         }
         eventosSistema.add(new EventoSistema(mensaje));
-        eventosGrid.getDataProvider().refreshAll();
+        // No necesitas llamar a refreshAll aquí porque ya lo hace el temporizador
     }
 
     public static class TemperaturaRegistro {

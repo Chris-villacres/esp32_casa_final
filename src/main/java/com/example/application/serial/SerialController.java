@@ -12,9 +12,7 @@ public class SerialController {
     private SerialPort serialPort;
     private Thread listenerThread;
 
-    // Constructor privado: abre el puerto una sola vez
     private SerialController() {
-        // Lista puertos disponibles
         SerialPort[] ports = SerialPort.getCommPorts();
         for (SerialPort port : ports) {
             System.out.println("Puerto disponible: " + port.getSystemPortName());
@@ -35,7 +33,6 @@ public class SerialController {
         }
     }
 
-    // Singleton: siempre devuelve la misma instancia
     public static SerialController getInstance() {
         if (instance == null) {
             instance = new SerialController();
@@ -43,7 +40,6 @@ public class SerialController {
         return instance;
     }
 
-    // Envía comando con salto de línea
     public void sendCommand(String command) {
         if (serialPort != null && serialPort.isOpen()) {
             String fullCommand = command + "\n";
@@ -54,7 +50,6 @@ public class SerialController {
         }
     }
 
-    // ✅ Listener: lee datos continuamente y usa el callback
     public void startListening(Consumer<String> onMessageReceived) {
         if (serialPort == null || !serialPort.isOpen()) {
             System.out.println("⚠️ Puerto no abierto. No se puede iniciar listener.");
@@ -83,23 +78,6 @@ public class SerialController {
         System.out.println("👂 Listener iniciado para recibir mensajes automáticos.");
     }
 
-    /*
-    // Puedes eliminar este método si usas startListening()
-    public String readResponse() {
-        if (serialPort != null && serialPort.isOpen()) {
-            byte[] buffer = new byte[1024];
-            int numRead = serialPort.readBytes(buffer, buffer.length);
-            if (numRead > 0) {
-                String response = new String(buffer, 0, numRead).trim();
-                System.out.println("📥 Respuesta recibida: " + response);
-                return response;
-            }
-        }
-        return "";
-    }
-    */
-
-    // Cierra el puerto
     public void close() {
         if (serialPort != null && serialPort.isOpen()) {
             serialPort.closePort();
@@ -107,7 +85,6 @@ public class SerialController {
         }
     }
 
-    // Verifica si el puerto está abierto
     public boolean isPortOpen() {
         return serialPort != null && serialPort.isOpen();
     }

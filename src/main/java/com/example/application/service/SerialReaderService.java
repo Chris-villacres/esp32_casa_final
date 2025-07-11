@@ -1,6 +1,7 @@
 package com.example.application.service;
 
 import com.example.application.serial.SerialController;
+import com.vaadin.flow.component.UI;
 import org.springframework.stereotype.Service;
 
 import java.util.function.Consumer;
@@ -11,16 +12,18 @@ public class SerialReaderService {
     private final SerialController serialController;
 
     public SerialReaderService() {
-        // Singleton del controlador serie
         this.serialController = SerialController.getInstance();
     }
 
     /**
-     * Inicializa la escucha de mensajes entrantes desde el ESP32.
-     * @param onMessageReceived Callback para registrar acciones automáticas.
+     * Inicia la escucha y asegura que el callback se ejecute dentro del contexto UI.
+     * @param onMessageReceived callback para manejar mensajes recibidos
+     * @param ui contexto UI para acceder de forma segura
      */
-    public void startListening(Consumer<String> onMessageReceived) {
-        serialController.startListening(onMessageReceived);
+    public void startListening(Consumer<String> onMessageReceived, UI ui) {
+        serialController.startListening(line -> {
+            ui.access(() -> onMessageReceived.accept(line));
+        });
     }
 
     public void sendCommand(String command) {
