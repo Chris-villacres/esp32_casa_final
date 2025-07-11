@@ -17,6 +17,8 @@ import com.vaadin.flow.server.Command;
 import com.vaadin.flow.component.UI;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -32,6 +34,9 @@ public class LucesView extends Composite<VerticalLayout> {
 
     private final List<TemperaturaRegistro> temperaturaHistorial = new ArrayList<>();
     private final Grid<TemperaturaRegistro> temperaturaGrid = new Grid<>(TemperaturaRegistro.class, false);
+
+    private final List<EventoSistema> eventosSistema = new ArrayList<>();
+    private final Grid<EventoSistema> eventosGrid = new Grid<>(EventoSistema.class, false);
 
     private int contadorLecturas = 0;
 
@@ -53,17 +58,23 @@ public class LucesView extends Composite<VerticalLayout> {
         }
 
         // Mostrar etiquetas de estado
-        content.add(temperaturaLabel);
-        content.add(motorEstadoLabel);
+        content.add(temperaturaLabel, motorEstadoLabel);
 
-        // Configurar tabla de historial de temperaturas
+        // Tabla de historial de temperaturas
         temperaturaGrid.addColumn(TemperaturaRegistro::getNumero).setHeader("#").setAutoWidth(true);
         temperaturaGrid.addColumn(TemperaturaRegistro::getValor).setHeader("Temperatura (°C)").setAutoWidth(true);
         temperaturaGrid.setItems(temperaturaHistorial);
         temperaturaGrid.setWidth("300px");
         content.add(temperaturaGrid);
 
-        // Botones
+        // Tabla de eventos del sistema
+        eventosGrid.addColumn(EventoSistema::getHora).setHeader("Hora").setAutoWidth(true);
+        eventosGrid.addColumn(EventoSistema::getMensaje).setHeader("Evento").setAutoWidth(true);
+        eventosGrid.setItems(eventosSistema);
+        eventosGrid.setWidth("500px");
+        content.add(eventosGrid);
+
+        // Botones de control
         content.add(
                 createButton("ON", VaadinIcon.LIGHTBULB, "ON"),
                 createButton("OFF", VaadinIcon.LIGHTBULB, "OFF"),
@@ -79,7 +90,7 @@ public class LucesView extends Composite<VerticalLayout> {
                 createButton("MOTOR OFF", VaadinIcon.STOP, "MOTOR OFF")
         );
 
-        // Iniciar lector automático
+        // Iniciar lectura automática desde ESP32
         startBackgroundReader();
     }
 
@@ -112,7 +123,7 @@ public class LucesView extends Composite<VerticalLayout> {
     }
 
     private void handleSerialResponse(String response) {
-        // Procesar temperatura
+        // Temperatura
         if (response.startsWith("Temperatura:")) {
             temperaturaLabel.setText(response);
 
@@ -120,6 +131,9 @@ public class LucesView extends Composite<VerticalLayout> {
             try {
                 double valor = Double.parseDouble(valorTexto);
                 contadorLecturas++;
+                if (temperaturaHistorial.size() >= 20) {
+                    temperaturaHistorial.remove(0);
+                }
                 temperaturaHistorial.add(new TemperaturaRegistro(contadorLecturas, valor));
                 temperaturaGrid.getDataProvider().refreshAll();
             } catch (NumberFormatException ignored) {
@@ -130,25 +144,49 @@ public class LucesView extends Composite<VerticalLayout> {
         // Estado motor
         if (response.contains("Motor DC ENCENDIDO")) {
             motorEstadoLabel.setText("Estado del motor: ENCENDIDO");
-            return;
-        }
-        if (response.contains("Motor DC APAGADO")) {
-            motorEstadoLabel.setText("Estado del motor: APAGADO");
+            agregarEvento(response);
             return;
         }
 
-        // Notificaciones solo para puerta
+        if (response.contains("Motor DC APAGADO")) {
+            motorEstadoLabel.setText("Estado del motor: APAGADO");
+            agregarEvento(response);
+            return;
+        }
+
+        // Eventos automáticos de puerta
         if (response.contains("Abriendo puerta")) {
             Notification.show("🔓 Puerta abierta automáticamente", 3000, Notification.Position.MIDDLE);
+            agregarEvento(response);
             return;
         }
 
         if (response.contains("Cerrando puerta")) {
             Notification.show("🔒 Puerta cerrada automáticamente", 3000, Notification.Position.MIDDLE);
+            agregarEvento(response);
+            return;
+        }
+
+        // Otros eventos útiles
+        if (
+                response.contains("encendidos") || response.contains("apagados") ||
+                        response.contains("Puerta") || response.contains("Garaje") ||
+                        response.contains("LUZ") || response.contains("Luces del CUARTO") ||
+                        response.contains("EXTERNA")
+        ) {
+            agregarEvento(response);
+            Notification.show(response, 3000, Notification.Position.MIDDLE);
         }
     }
 
-    // Clase anidada
+    private void agregarEvento(String mensaje) {
+        if (eventosSistema.size() >= 20) {
+            eventosSistema.remove(0);
+        }
+        eventosSistema.add(new EventoSistema(mensaje));
+        eventosGrid.getDataProvider().refreshAll();
+    }
+
     public static class TemperaturaRegistro {
         private final int numero;
         private final double valor;
@@ -164,6 +202,24 @@ public class LucesView extends Composite<VerticalLayout> {
 
         public double getValor() {
             return valor;
+        }
+    }
+
+    public static class EventoSistema {
+        private final String mensaje;
+        private final String hora;
+
+        public EventoSistema(String mensaje) {
+            this.mensaje = mensaje;
+            this.hora = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+        }
+
+        public String getMensaje() {
+            return mensaje;
+        }
+
+        public String getHora() {
+            return hora;
         }
     }
 }
