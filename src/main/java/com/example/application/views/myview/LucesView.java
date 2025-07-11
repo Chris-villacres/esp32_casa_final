@@ -2,6 +2,7 @@ package com.example.application.views.myview;
 
 import com.example.application.service.SerialReaderService;
 import com.vaadin.flow.component.Composite;
+import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.grid.Grid;
@@ -13,16 +14,12 @@ import com.vaadin.flow.component.orderedlayout.FlexComponent.Alignment;
 import com.vaadin.flow.component.html.Label;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
-import com.vaadin.flow.server.Command;
-import com.vaadin.flow.component.UI;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 @PageTitle("Control de Luces y Accesos")
 @Route("luces")
@@ -90,14 +87,17 @@ public class LucesView extends Composite<VerticalLayout> {
                 createButton("MOTOR OFF", VaadinIcon.STOP, "MOTOR OFF")
         );
 
-        // Iniciar lectura automática desde ESP32
-        startBackgroundReader();
+        // Iniciar escucha continua desde ESP32 con callback para actualizar UI
+        serialReaderService.startListening(this::handleSerialResponse);
     }
 
     private Button createButton(String text, VaadinIcon icon, String command) {
         Button button = new Button(text, new Icon(icon));
         button.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-        button.addClickListener(e -> sendCommand(command));
+        button.addClickListener(e -> {
+            sendCommand(command);
+            registrarEventoManual(command);
+        });
         return button;
     }
 
@@ -113,70 +113,85 @@ public class LucesView extends Composite<VerticalLayout> {
         }
     }
 
-    private void startBackgroundReader() {
-        Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
-            String response = serialReaderService.readResponse();
-            if (response != null && !response.trim().isEmpty()) {
-                UI.getCurrent().access((Command) () -> handleSerialResponse(response.trim()));
+    private void handleSerialResponse(String response) {
+        UI.getCurrent().access(() -> {
+            // Temperatura
+            if (response.startsWith("Temperatura:")) {
+                temperaturaLabel.setText(response);
+
+                String valorTexto = response.replace("Temperatura:", "").replace("C", "").trim();
+                try {
+                    double valor = Double.parseDouble(valorTexto);
+                    contadorLecturas++;
+                    if (temperaturaHistorial.size() >= 20) {
+                        temperaturaHistorial.remove(0);
+                    }
+                    temperaturaHistorial.add(new TemperaturaRegistro(contadorLecturas, valor));
+                    temperaturaGrid.getDataProvider().refreshAll();
+                } catch (NumberFormatException ignored) {
+                }
+                return;
             }
-        }, 0, 1, TimeUnit.SECONDS);
+
+            // Estado motor
+            if (response.contains("Motor DC ENCENDIDO")) {
+                motorEstadoLabel.setText("Estado del motor: ENCENDIDO");
+                agregarEvento(response);
+                return;
+            }
+
+            if (response.contains("Motor DC APAGADO")) {
+                motorEstadoLabel.setText("Estado del motor: APAGADO");
+                agregarEvento(response);
+                return;
+            }
+
+            // Eventos automáticos de puerta
+            if (response.contains("Abriendo puerta")) {
+                Notification.show("🔓 Puerta abierta automáticamente", 3000, Notification.Position.MIDDLE);
+                agregarEvento(response);
+                return;
+            }
+
+            if (response.contains("Cerrando puerta")) {
+                Notification.show("🔒 Puerta cerrada automáticamente", 3000, Notification.Position.MIDDLE);
+                agregarEvento(response);
+                return;
+            }
+
+            // Otros eventos útiles
+            if (
+                    response.toLowerCase().contains("encendidos") || response.toLowerCase().contains("apagados") ||
+                            response.toLowerCase().contains("puerta") || response.toLowerCase().contains("garaje") ||
+                            response.toLowerCase().contains("luz") || response.toLowerCase().contains("cuarto") ||
+                            response.toLowerCase().contains("externa") || response.toLowerCase().contains("motor")
+            ) {
+                agregarEvento(response);
+                Notification.show(response, 3000, Notification.Position.MIDDLE);
+            }
+        });
     }
 
-    private void handleSerialResponse(String response) {
-        // Temperatura
-        if (response.startsWith("Temperatura:")) {
-            temperaturaLabel.setText(response);
-
-            String valorTexto = response.replace("Temperatura:", "").replace("C", "").trim();
-            try {
-                double valor = Double.parseDouble(valorTexto);
-                contadorLecturas++;
-                if (temperaturaHistorial.size() >= 20) {
-                    temperaturaHistorial.remove(0);
-                }
-                temperaturaHistorial.add(new TemperaturaRegistro(contadorLecturas, valor));
-                temperaturaGrid.getDataProvider().refreshAll();
-            } catch (NumberFormatException ignored) {
-            }
-            return;
+    private void registrarEventoManual(String comando) {
+        // Mapear comando a texto amigable para la tabla y notificación
+        String descripcion;
+        switch (comando) {
+            case "ON": descripcion = "Luces principales encendidas (manual)"; break;
+            case "OFF": descripcion = "Luces principales apagadas (manual)"; break;
+            case "CUARTO ON": descripcion = "Luces del cuarto encendidas (manual)"; break;
+            case "CUARTO OFF": descripcion = "Luces del cuarto apagadas (manual)"; break;
+            case "EXTERNA ON": descripcion = "Luz externa encendida (manual)"; break;
+            case "EXTERNA OFF": descripcion = "Luz externa apagada (manual)"; break;
+            case "DOOR ON": descripcion = "Puerta abierta (manual)"; break;
+            case "DOOR OFF": descripcion = "Puerta cerrada (manual)"; break;
+            case "GARAGE ON": descripcion = "Garaje abierto (manual)"; break;
+            case "GARAGE OFF": descripcion = "Garaje cerrado (manual)"; break;
+            case "MOTOR ON": descripcion = "Motor encendido (manual)"; break;
+            case "MOTOR OFF": descripcion = "Motor apagado (manual)"; break;
+            default: descripcion = "Comando enviado: " + comando; break;
         }
-
-        // Estado motor
-        if (response.contains("Motor DC ENCENDIDO")) {
-            motorEstadoLabel.setText("Estado del motor: ENCENDIDO");
-            agregarEvento(response);
-            return;
-        }
-
-        if (response.contains("Motor DC APAGADO")) {
-            motorEstadoLabel.setText("Estado del motor: APAGADO");
-            agregarEvento(response);
-            return;
-        }
-
-        // Eventos automáticos de puerta
-        if (response.contains("Abriendo puerta")) {
-            Notification.show("🔓 Puerta abierta automáticamente", 3000, Notification.Position.MIDDLE);
-            agregarEvento(response);
-            return;
-        }
-
-        if (response.contains("Cerrando puerta")) {
-            Notification.show("🔒 Puerta cerrada automáticamente", 3000, Notification.Position.MIDDLE);
-            agregarEvento(response);
-            return;
-        }
-
-        // Otros eventos útiles
-        if (
-                response.contains("encendidos") || response.contains("apagados") ||
-                        response.contains("Puerta") || response.contains("Garaje") ||
-                        response.contains("LUZ") || response.contains("Luces del CUARTO") ||
-                        response.contains("EXTERNA")
-        ) {
-            agregarEvento(response);
-            Notification.show(response, 3000, Notification.Position.MIDDLE);
-        }
+        agregarEvento(descripcion);
+        Notification.show(descripcion, 3000, Notification.Position.MIDDLE);
     }
 
     private void agregarEvento(String mensaje) {
