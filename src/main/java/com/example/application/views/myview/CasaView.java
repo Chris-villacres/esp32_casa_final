@@ -1,13 +1,15 @@
 package com.example.application.views.myview;
 
 import com.example.application.service.SerialReaderService;
+import com.example.application.model.EventoSistema;
+import com.example.application.repository.EventoSistemaRepository;
 import com.vaadin.flow.component.Composite;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.H3;
-import com.vaadin.flow.component.html.Label;
+import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.Icon;
 import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -26,10 +28,10 @@ import java.util.TimerTask;
 
 @PageTitle("⚡ Control de Luces y Accesos ⚡")
 @Route("")
-public class LucesView extends Composite<VerticalLayout> {
+public class CasaView extends Composite<VerticalLayout> {
 
     private final SerialReaderService serialReaderService;
-    private final Label motorEstadoLabel = new Label("⚙️ Estado del motor: --");
+    private final Span motorEstadoLabel = new Span("⚙️ Estado del motor: --");
 
     private final List<EventoSistema> eventosSistema = new ArrayList<>();
     private final Grid<EventoSistema> eventosGrid = new Grid<>(EventoSistema.class, false);
@@ -39,75 +41,74 @@ public class LucesView extends Composite<VerticalLayout> {
 
     private int contadorLecturas = 0;
 
+    private final EventoSistemaRepository eventoSistemaRepository;
+
     @Autowired
-    public LucesView(SerialReaderService serialReaderService) {
+    public CasaView(SerialReaderService serialReaderService, EventoSistemaRepository eventoSistemaRepository) {
         this.serialReaderService = serialReaderService;
+        this.eventoSistemaRepository = eventoSistemaRepository;
 
         VerticalLayout content = getContent();
         content.setWidthFull();
         content.setSpacing(true);
 
         if (!serialReaderService.isPortOpen()) {
-            eventosSistema.add(new EventoSistema("⚠️ Puerto serial no está abierto. Verifica la conexión del ESP32."));
+            agregarEvento("⚠️ Puerto serial no está abierto. Verifica la conexión del ESP32.");
         }
 
-        // --- Sección Izquierda: Estado y Tablas ---
-        VerticalLayout leftColumn = new VerticalLayout();
-        leftColumn.setSpacing(true);
-        leftColumn.setAlignItems(Alignment.CENTER);
-
-        motorEstadoLabel.getStyle().set("font-size", "16px").set("font-weight", "bold");
-        leftColumn.add(motorEstadoLabel);
-
+        // --- Events Grid ---
         eventosGrid.addColumn(EventoSistema::getHora).setHeader("🕒 Hora").setAutoWidth(true);
         eventosGrid.addColumn(EventoSistema::getMensaje).setHeader("📝 Evento").setAutoWidth(true);
         eventosGrid.setItems(eventosSistema);
-        eventosGrid.setWidth("500px");
-        leftColumn.add(eventosGrid);
+        eventosGrid.setWidth("400px");
 
+        // --- Temperatures Grid ---
         temperaturaGrid.addColumn(TemperaturaRegistro::getNumero).setHeader("#").setAutoWidth(true);
         temperaturaGrid.addColumn(TemperaturaRegistro::getValor).setHeader("🌡️ Temperatura (°C)").setAutoWidth(true);
         temperaturaGrid.setItems(temperaturaHistorial);
         temperaturaGrid.setWidth("300px");
-        leftColumn.add(temperaturaGrid);
 
-        // --- Sección Derecha: Botones agrupados ---
-        VerticalLayout rightColumn = new VerticalLayout();
-        rightColumn.setSpacing(true);
-        rightColumn.setAlignItems(Alignment.CENTER);
-        rightColumn.getStyle().set("padding", "20px");
+        // --- Layout: Two columns side by side ---
+        VerticalLayout eventosLayout = new VerticalLayout(new H3("Eventos del Sistema"), eventosGrid);
+        VerticalLayout temperaturaLayout = new VerticalLayout(new H3("Historial de Temperaturas"), temperaturaGrid);
 
-        rightColumn.add(
+        HorizontalLayout gridsLayout = new HorizontalLayout(eventosLayout, temperaturaLayout);
+        gridsLayout.setWidthFull();
+        gridsLayout.setSpacing(true);
+        gridsLayout.setAlignItems(Alignment.START);
+
+        // --- Botones de control ---
+        VerticalLayout botonesLayout = new VerticalLayout();
+        botonesLayout.setSpacing(true);
+        botonesLayout.setAlignItems(Alignment.CENTER);
+        botonesLayout.getStyle().set("padding", "20px");
+
+        botonesLayout.add(
                 new H3("💡 Luces Principales"),
                 new HorizontalLayout(
                         createButton("ON", VaadinIcon.LIGHTBULB, "ON"),
                         createButton("OFF", VaadinIcon.LIGHTBULB, "OFF")
                 ),
-
                 new H3("🛏️ Luces de Cuarto"),
                 new HorizontalLayout(
                         createButton("CUARTO ON", VaadinIcon.BED, "CUARTO ON"),
                         createButton("CUARTO OFF", VaadinIcon.BED, "CUARTO OFF")
                 ),
-
                 new H3("🌐 Luz Externa"),
                 new HorizontalLayout(
                         createButton("EXTERNA ON", VaadinIcon.EXTERNAL_LINK, "EXTERNA ON"),
                         createButton("EXTERNA OFF", VaadinIcon.EXTERNAL_LINK, "EXTERNA OFF")
                 ),
-
                 new H3("🚪 Puerta"),
                 new HorizontalLayout(
                         createButton("DOOR ON", VaadinIcon.ENTER_ARROW, "DOOR ON"),
                         createButton("DOOR OFF", VaadinIcon.EXIT, "DOOR OFF")
                 ),
-
                 new H3("🚗 Garage"),
                 new HorizontalLayout(
                         createButton("GARAGE ON", VaadinIcon.CAR, "GARAGE ON"),
                         createButton("GARAGE OFF", VaadinIcon.CAR, "GARAGE OFF")
                 ),
-
                 new H3("🌀 Motor / Ventilador"),
                 new HorizontalLayout(
                         createButton("MOTOR ON", VaadinIcon.PLAY_CIRCLE, "MOTOR ON"),
@@ -115,11 +116,14 @@ public class LucesView extends Composite<VerticalLayout> {
                 )
         );
 
-        // --- Layout general (horizontal) ---
-        HorizontalLayout mainLayout = new HorizontalLayout(leftColumn, rightColumn);
+        // --- Estado del motor arriba de los grids ---
+        VerticalLayout topLayout = new VerticalLayout(motorEstadoLabel);
+        topLayout.setAlignItems(Alignment.CENTER);
+
+        // --- Layout principal ---
+        VerticalLayout mainLayout = new VerticalLayout(topLayout, gridsLayout, botonesLayout);
         mainLayout.setWidthFull();
         mainLayout.setSpacing(true);
-        mainLayout.setAlignItems(Alignment.START);
 
         content.add(mainLayout);
 
@@ -182,10 +186,11 @@ public class LucesView extends Composite<VerticalLayout> {
                 temperaturaHistorial.add(new TemperaturaRegistro(contadorLecturas, valor));
             } catch (NumberFormatException ignored) {
             }
+            // Do NOT save temperature readings to MongoDB
             return;
         }
 
-        agregarEvento(response);
+        agregarEvento(response); // Only non-temperature events are saved
     }
 
     private void registrarEventoManual(String comando) {
@@ -212,13 +217,16 @@ public class LucesView extends Composite<VerticalLayout> {
         if (eventosSistema.size() >= 30) {
             eventosSistema.remove(0);
         }
-        eventosSistema.add(new EventoSistema(mensaje));
+        String hora = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+        EventoSistema evento = new EventoSistema(mensaje, hora);
+        eventosSistema.add(evento);
+        eventoSistemaRepository.save(evento);
     }
 
-    // Inner classes
+    // --- Clase para el historial de temperaturas ---
     public static class TemperaturaRegistro {
-        private final int numero;
-        private final double valor;
+        private int numero;
+        private double valor;
 
         public TemperaturaRegistro(int numero, double valor) {
             this.numero = numero;
@@ -231,24 +239,6 @@ public class LucesView extends Composite<VerticalLayout> {
 
         public double getValor() {
             return valor;
-        }
-    }
-
-    public static class EventoSistema {
-        private final String mensaje;
-        private final String hora;
-
-        public EventoSistema(String mensaje) {
-            this.mensaje = mensaje;
-            this.hora = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-        }
-
-        public String getMensaje() {
-            return mensaje;
-        }
-
-        public String getHora() {
-            return hora;
         }
     }
 }
